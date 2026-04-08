@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: stgnn-api
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PATH=/app/checkpoints/stgnn_metrla/best_model.pt
+      - DATA_DIR=/app/data
+      - DATASET=metr-la
+    volumes:
+      - ./data:/app/data:ro
+      - ./checkpoints:/app/checkpoints:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: stgnn-frontend
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  default:
+    name: stgnn-network
