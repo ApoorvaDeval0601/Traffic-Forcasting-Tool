@@ -1,5 +1,4 @@
 services:
-  # Backend API
   - type: web
     name: stgnn-api
     runtime: python
@@ -17,11 +16,9 @@ services:
       - key: HF_TOKEN
         sync: false
 
-  # Frontend static site
   - type: web
     name: stgnn-frontend
     runtime: static
-    plan: free
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: ./frontend/dist
     routes:
