@@ -1,42 +1,26 @@
 #!/bin/bash
-# startup.sh — Downloads model and data from HuggingFace then starts API
-# Runs on Render before the main process starts
+# startup_cached.sh — Downloads cache from HuggingFace then starts lightweight API
 
 set -e
 
-REPO="Apoorva06/stgnn-traffic"
-echo "Downloading model and data from HuggingFace: $REPO"
-
+echo "Installing huggingface_hub..."
 pip install huggingface_hub --quiet
 
+echo "Downloading predictions cache from HuggingFace..."
 python -c "
-from huggingface_hub import snapshot_download
-import os, shutil
+from huggingface_hub import hf_hub_download
+import os
 
-local = snapshot_download(
+path = hf_hub_download(
     repo_id='Apoorva06/stgnn-traffic',
+    filename='data/predictions_cache.json',
     repo_type='model',
-    local_dir='/tmp/hf_download',
-    ignore_patterns=['*.md', '.gitattributes'],
+    token=os.getenv('HF_TOKEN') or None,
+    local_dir='/tmp',
 )
-print(f'Downloaded to {local}')
-
-# Copy checkpoints
-if os.path.exists('/tmp/hf_download/checkpoints'):
-    if os.path.exists('checkpoints'):
-        shutil.rmtree('checkpoints')
-    shutil.copytree('/tmp/hf_download/checkpoints', 'checkpoints')
-    print('Checkpoints ready')
-
-# Copy data
-if os.path.exists('/tmp/hf_download/data'):
-    if os.path.exists('data'):
-        shutil.rmtree('data')
-    shutil.copytree('/tmp/hf_download/data', 'data')
-    print('Data ready')
-
-print('All files ready')
+print(f'Cache downloaded to {path}')
 "
 
-echo "Starting API..."
+echo "Starting cached API..."
+export CACHE_PATH=/tmp/data/predictions_cache.json
 exec uvicorn api.main:app --host 0.0.0.0 --port $PORT
