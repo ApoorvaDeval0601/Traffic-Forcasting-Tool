@@ -1,5 +1,5 @@
 services:
-  # ── Backend API ───────────────────────────────────────────────────────────
+  # Backend API
   - type: web
     name: stgnn-api
     runtime: python
@@ -15,13 +15,12 @@ services:
       - key: DATASET
         value: metr-la
       - key: HF_TOKEN
-        sync: false   # Set this in Render dashboard → Environment
+        sync: false
 
-  # ── Frontend static site ──────────────────────────────────────────────────
+  # Frontend static site
   - type: web
     name: stgnn-frontend
     runtime: static
-    region: oregon
     plan: free
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: ./frontend/dist
