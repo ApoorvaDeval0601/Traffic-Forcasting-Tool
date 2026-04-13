@@ -62,3 +62,6 @@ frontend/.vite/
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Large cache file - stored on HuggingFace
+data/predictions_cache.json
