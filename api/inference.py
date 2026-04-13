@@ -48,7 +48,7 @@ class TrafficInference:
         self.edge_index = torch.from_numpy(edge_index).long().to(self.device)
 
         # Load model
-        checkpoint = torch.load(model_path, map_location=self.device)
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
         cfg = checkpoint["config"]
         self.model = build_model(cfg["model"])
         self.model.load_state_dict(checkpoint["model_state"])

@@ -1,16 +1,8 @@
 """
 Training loop for ST-GNN.
-
-Features:
-- Masked MAE loss (ignores missing/zero sensor readings)
-- Cosine LR scheduling with warmup
-- Gradient clipping
-- Early stopping with best model checkpointing
-- Resume from checkpoint via start_epoch
-- Optional W&B logging
+Fixed: mask_threshold=0.0 for normalized data.
 """
 
-import os
 import time
 import math
 import torch
@@ -25,24 +17,25 @@ from evaluation.metrics import compute_metrics
 
 
 class MaskedMAELoss(nn.Module):
-    """MAE loss that ignores sensors with near-zero speed (missing data)."""
+    """MAE loss — mask_threshold=0.0 only masks exact zeros (missing sensors)."""
 
-    def __init__(self, mask_threshold: float = 10.0, eps: float = 1e-4):
+    def __init__(self, mask_threshold: float = 0.0, eps: float = 1e-4):
         super().__init__()
         self.mask_threshold = mask_threshold
         self.eps = eps
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        mask = (target.abs() > self.mask_threshold).float()
+        if self.mask_threshold == 0.0:
+            mask = (target != 0.0).float()
+        else:
+            mask = (target.abs() > self.mask_threshold).float()
         loss = (pred - target).abs() * mask
         return loss.sum() / (mask.sum() + self.eps)
 
 
 class WarmupCosineScheduler:
-    """Linear warmup then cosine annealing."""
-
     def __init__(self, optimizer, warmup_epochs, total_epochs, min_lr=1e-5):
-        self.optimizer    = optimizer
+        self.optimizer     = optimizer
         self.warmup_epochs = warmup_epochs
         self.total_epochs  = total_epochs
         self.min_lr        = min_lr
@@ -73,7 +66,7 @@ class Trainer:
         val_loader,
         scaler=None,
         device: Optional[str] = None,
-        start_epoch: int = 0,          # for resuming
+        start_epoch: int = 0,
     ):
         self.model        = model
         self.config       = config
@@ -87,7 +80,7 @@ class Trainer:
             self.device = "cpu"
         self.model = self.model.to(self.device)
 
-        self.criterion = MaskedMAELoss(mask_threshold=config.train.mask_threshold)
+        self.criterion = MaskedMAELoss(mask_threshold=0.0)
 
         self.optimizer = torch.optim.Adam(
             model.parameters(),
@@ -105,17 +98,13 @@ class Trainer:
         self.save_dir = Path(config.train.save_dir) / config.train.experiment_name
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        self.best_val_mae    = float("inf")
+        self.best_val_mae     = float("inf")
         self.patience_counter = 0
 
         self.use_wandb = config.train.use_wandb
         if self.use_wandb:
             import wandb
-            wandb.init(
-                project="stgnn-traffic",
-                name=config.train.experiment_name,
-                config=config.to_dict(),
-            )
+            wandb.init(project="stgnn-traffic", name=config.train.experiment_name, config=config.to_dict())
 
     def train_epoch(self, epoch: int) -> dict:
         self.model.train()
@@ -133,10 +122,7 @@ class Trainer:
             pred = self.model(x, edge_index)
             loss = self.criterion(pred.squeeze(-1), y.squeeze(-1))
             loss.backward()
-
-            torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(), self.config.train.grad_clip
-            )
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.train.grad_clip)
             self.optimizer.step()
 
             total_loss += loss.item()
@@ -175,14 +161,13 @@ class Trainer:
             "metrics":         metrics,
             "config":          self.config.to_dict(),
         }
-        path = self.save_dir / f"epoch_{epoch:03d}.pt"
-        torch.save(state, path)
+        torch.save(state, self.save_dir / f"epoch_{epoch:03d}.pt")
         if is_best:
             torch.save(state, self.save_dir / "best_model.pt")
             print(f"  ✓ New best model saved (val MAE: {metrics['mae']:.4f})")
 
     def train(self):
-        cfg = self.config.train
+        cfg          = self.config.train
         total_epochs = cfg.epochs
 
         print(f"\nTraining on {self.device} | {total_epochs} epochs")
@@ -205,7 +190,7 @@ class Trainer:
 
             if self.use_wandb:
                 import wandb
-                wandb.log({"epoch": epoch + 1, "lr": lr,
+                wandb.log({"epoch": epoch+1, "lr": lr,
                            **{f"train/{k}": v for k, v in train_metrics.items()},
                            **{f"val/{k}":   v for k, v in val_metrics.items()}})
 

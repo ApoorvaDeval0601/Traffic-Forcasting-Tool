@@ -1,197 +1,181 @@
-// frontend/src/pages/Dashboard.jsx
-// Main dashboard: live metrics + forecast chart + sensor selector
-
-import { useState, useEffect } from "react";
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
+import { useState, useEffect, useRef } from "react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const COLORS = { free: "#10b981", moderate: "#f59e0b", heavy: "#ef4444", severe: "#a855f7" };
 
-const CONGESTION_COLORS = {
-  free:     "#16a34a",
-  moderate: "#ca8a04",
-  heavy:    "#dc2626",
-  severe:   "#7c3aed",
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: "#1a2235", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "10px 14px", fontSize: 12 }}>
+      <div style={{ color: "#6b7a99", marginBottom: 6 }}>{label}</div>
+      {payload.map(p => (
+        <div key={p.name} style={{ color: p.color, marginBottom: 3 }}>
+          {p.name}: <strong>{p.value} mph</strong>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 export default function Dashboard() {
-  const [forecast, setForecast] = useState(null);
-  const [selectedSensor, setSelectedSensor] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [metrics, setMetrics] = useState(null);
+  const [frame, setFrame]         = useState(null);
+  const [selected, setSelected]   = useState(0);
+  const [benchmark, setBenchmark] = useState(null);
+  const [isLive, setIsLive]       = useState(false);
+  const wsRef = useRef(null);
 
   useEffect(() => {
-    fetchForecast();
-    fetchMetrics();
-    const interval = setInterval(fetchForecast, 60_000);
-    return () => clearInterval(interval);
+    fetchFrame();
+    fetch(`${API}/benchmark`).then(r => r.json()).then(setBenchmark).catch(() => {});
   }, []);
 
-  async function fetchForecast() {
+  async function fetchFrame() {
     try {
-      const res = await fetch(`${API}/forecast`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sensor_ids: null }),
-      });
-      const data = await res.json();
-      setForecast(data);
-    } catch (e) {
-      console.error("Forecast fetch failed:", e);
-    } finally {
-      setLoading(false);
+      const data = await fetch(`${API}/frame`).then(r => r.json());
+      setFrame(data);
+    } catch (e) { console.error(e); }
+  }
+
+  function toggleLive() {
+    if (isLive) { wsRef.current?.close(); setIsLive(false); }
+    else {
+      const ws = new WebSocket("ws://localhost:8000/ws/live");
+      ws.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.type === "frame") {
+    setFrame(prev => prev ? {
+      ...prev,
+      frame_idx: m.frame_idx,
+      congestion_counts: m.congestion_counts,
+    } : prev);
+  }
+};
+      wsRef.current = ws;
+      setIsLive(true);
     }
   }
 
-  async function fetchMetrics() {
-    try {
-      const res = await fetch(`${API}/model-comparison`);
-      if (res.ok) setMetrics(await res.json());
-    } catch (_) {}
-  }
+  const sensor = frame?.sensors?.[selected];
+  const counts = frame?.congestion_counts || {};
 
-  const sensor = forecast?.sensors?.[selectedSensor];
-  const chartData = sensor
-    ? sensor.predicted_speeds.map((speed, i) => ({
-        time: `+${(i + 1) * 5}m`,
-        predicted: speed,
-        threshold: 60,
-      }))
-    : [];
-
-  // Congestion distribution
-  const congestionCounts = forecast?.sensors?.reduce((acc, s) => {
-    acc[s.congestion_level] = (acc[s.congestion_level] || 0) + 1;
-    return acc;
-  }, {}) || {};
+  const chartData = sensor ? sensor.timestamps.map((t, i) => ({
+    time:      t,
+    Predicted: sensor.predicted_speeds[i],
+    Actual:    sensor.actual_speeds?.[i] ?? null,
+  })) : [];
 
   return (
-    <div className="dashboard">
+    <div>
       <header className="page-header">
-        <h1>Traffic Forecast Dashboard</h1>
-        <p className="subtitle">METR-LA · 207 sensors · 1-hour horizon</p>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div>
+            <h1>Traffic Forecast Dashboard</h1>
+            <p className="subtitle">
+              Real-time predictions from ST-GNN · METR-LA · 1-hour horizon
+              {frame && <span style={{ marginLeft:12, fontFamily:"var(--mono)", fontSize:11 }}>
+                frame {frame.frame_idx}/{frame.total_frames}
+              </span>}
+            </p>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button className="btn" onClick={fetchFrame}>↻ Next frame</button>
+            <button className={`btn ${isLive ? "btn-danger" : "btn-success"}`} onClick={toggleLive}>
+              {isLive ? "⏹ Stop live" : "▶ Go live"}
+            </button>
+          </div>
+        </div>
       </header>
 
-      {/* Metric cards */}
+      {/* Congestion cards */}
       <div className="metric-grid">
-        {Object.entries(congestionCounts).map(([level, count]) => (
-          <div key={level} className="metric-card">
-            <span className="metric-label">{level}</span>
-            <span
-              className="metric-value"
-              style={{ color: CONGESTION_COLORS[level] }}
-            >
-              {count}
-            </span>
-            <span className="metric-sub">sensors</span>
+        {[["free","Free flow"],["moderate","Moderate"],["heavy","Heavy"],["severe","Severe"]].map(([k, label]) => (
+          <div key={k} className="metric-card">
+            <div className="metric-label">{label}</div>
+            <div className="metric-value" style={{ color: COLORS[k] }}>{counts[k] || 0}</div>
+            <div className="metric-sub">sensors</div>
           </div>
         ))}
-        {metrics && (
+        {benchmark?.transformer && (
           <div className="metric-card highlight">
-            <span className="metric-label">Model MAE</span>
-            <span className="metric-value">{metrics.transformer?.mae?.toFixed(3)}</span>
-            <span className="metric-sub">mph (60-min)</span>
+            <div className="metric-label">Transformer MAE</div>
+            <div className="metric-value" style={{ color: "var(--accent2)", fontSize:20 }}>
+              {benchmark.transformer.mae_60min?.toFixed(2)}
+            </div>
+            <div className="metric-sub">mph at 60 min</div>
+          </div>
+        )}
+        {benchmark?.lstm && (
+          <div className="metric-card">
+            <div className="metric-label">LSTM MAE</div>
+            <div className="metric-value" style={{ color: "var(--amber)", fontSize:20 }}>
+              {benchmark.lstm.mae_60min?.toFixed(2)}
+            </div>
+            <div className="metric-sub">mph at 60 min</div>
           </div>
         )}
       </div>
 
-      {/* Sensor selector + chart */}
+      {/* Chart */}
       <div className="chart-section">
         <div className="chart-controls">
           <label>Sensor</label>
-          <select
-            value={selectedSensor}
-            onChange={(e) => setSelectedSensor(+e.target.value)}
-          >
-            {forecast?.sensors?.slice(0, 20).map((s, i) => (
-              <option key={s.sensor_id} value={i}>
-                {s.name || `Sensor ${s.sensor_id}`} — {s.congestion_level}
+          <select value={selected} onChange={e => setSelected(+e.target.value)}>
+            {frame?.sensors?.slice(0,30).map(s => (
+              <option key={s.id} value={s.id}>
+                Sensor {s.id} — {s.current_speed} mph — {s.congestion}
               </option>
             ))}
           </select>
-
           {sensor && (
-            <div
-              className="congestion-badge"
-              style={{ background: CONGESTION_COLORS[sensor.congestion_level] }}
-            >
-              {sensor.current_speed} mph · {sensor.congestion_level}
-            </div>
+            <span className="badge" style={{ background: COLORS[sensor.congestion] + "25", color: COLORS[sensor.congestion], border: `1px solid ${COLORS[sensor.congestion]}40` }}>
+              {sensor.current_speed} mph · {sensor.congestion}
+            </span>
           )}
+          <span style={{ marginLeft:"auto", fontSize:11, color:"var(--muted)" }}>
+            Blue = predicted &nbsp;·&nbsp; Green = actual
+          </span>
         </div>
 
-        <div className="chart-container">
-          {loading ? (
-            <p className="loading-text">Loading forecast...</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="time" tick={{ fontSize: 12 }} />
-                <YAxis
-                  domain={[0, 80]}
-                  label={{ value: "Speed (mph)", angle: -90, position: "insideLeft", fontSize: 12 }}
-                />
-                <Tooltip
-                  formatter={(val) => [`${val} mph`]}
-                  labelFormatter={(l) => `Horizon: ${l}`}
-                />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="predicted"
-                  stroke="#6366f1"
-                  strokeWidth={2.5}
-                  dot={{ r: 3 }}
-                  name="Predicted speed"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="threshold"
-                  stroke="#16a34a"
-                  strokeDasharray="5 5"
-                  strokeWidth={1}
-                  dot={false}
-                  name="Free flow (60 mph)"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+            <XAxis dataKey="time" tick={{ fill: "#6b7a99", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis domain={[0,85]} tick={{ fill: "#6b7a99", fontSize: 11 }} axisLine={false} tickLine={false}
+              label={{ value: "Speed (mph)", angle: -90, position: "insideLeft", fill: "#6b7a99", fontSize: 11 }} />
+            <Tooltip content={<CustomTooltip />} />
+            <Legend wrapperStyle={{ fontSize: 12, color: "#6b7a99" }} />
+            <Line type="monotone" dataKey="Predicted" stroke="#6366f1" strokeWidth={2.5} dot={{ r:3, fill:"#6366f1" }} activeDot={{ r:5 }} />
+            <Line type="monotone" dataKey="Actual" stroke="#10b981" strokeWidth={2} strokeDasharray="5 4" dot={{ r:3, fill:"#10b981" }} activeDot={{ r:5 }} />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
 
-      {/* Model comparison if available */}
-      {metrics && (
+      {/* Comparison table */}
+      {benchmark?.transformer && (
         <div className="comparison-table-section">
-          <h2>Model Comparison (METR-LA)</h2>
-          <table className="comparison-table">
+          <h2>Model Comparison — METR-LA Test Set</h2>
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Metric</th>
-                <th>ST-GNN (Transformer)</th>
-                <th>ST-GNN (LSTM)</th>
-                <th>Improvement</th>
+                <th>ST-GNN Transformer</th>
+                <th>ST-GNN LSTM</th>
+                <th>Winner</th>
               </tr>
             </thead>
             <tbody>
-              {[
-                ["MAE 15min", "mae_15min"],
-                ["MAE 30min", "mae_30min"],
-                ["MAE 60min", "mae_60min"],
-                ["RMSE 60min", "rmse_60min"],
-              ].map(([label, key]) => {
-                const t = metrics.transformer?.[key];
-                const l = metrics.lstm?.[key];
-                const imp = t && l ? (((l - t) / l) * 100).toFixed(1) : null;
+              {[["MAE 15 min","mae_15min"],["MAE 30 min","mae_30min"],["MAE 60 min","mae_60min"],["RMSE 60 min","rmse_60min"]].map(([label,key]) => {
+                const t = benchmark.transformer[key];
+                const l = benchmark.lstm[key];
+                const tWins = t < l;
                 return (
                   <tr key={key}>
-                    <td>{label}</td>
-                    <td className="better">{t?.toFixed(3) ?? "—"}</td>
-                    <td>{l?.toFixed(3) ?? "—"}</td>
-                    <td className="improvement">
-                      {imp ? `↑ ${imp}%` : "—"}
+                    <td style={{ color:"var(--muted)" }}>{label}</td>
+                    <td className={tWins ? "better" : ""}>{t?.toFixed(3)} mph</td>
+                    <td className={!tWins ? "better" : ""}>{l?.toFixed(3)} mph</td>
+                    <td style={{ color: tWins ? "var(--accent2)" : "var(--amber)", fontWeight:500, fontSize:12 }}>
+                      {tWins ? "Transformer" : "LSTM"}
                     </td>
                   </tr>
                 );
