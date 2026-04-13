@@ -1,41 +1,34 @@
-# render.yaml — Render.com deployment configuration
-# Deploy at: https://dashboard.render.com/blueprints → "New Blueprint"
-
 services:
-  # FastAPI backend
+  # ── Backend API ───────────────────────────────────────────────────────────
   - type: web
     name: stgnn-api
     runtime: python
+    region: oregon
+    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    startCommand: bash startup.sh
     envVars:
       - key: MODEL_PATH
-        value: checkpoints/stgnn_metrla/best_model.pt
+        value: checkpoints/stgnn_metr_la/best_model.pt
       - key: DATA_DIR
         value: data
       - key: DATASET
         value: metr-la
-    disk:
-      name: stgnn-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 2
-    plan: free   # Upgrade to starter for persistent disk + no sleep
+      - key: HF_TOKEN
+        sync: false   # Set this in Render dashboard → Environment
 
-  # React frontend (static site — free, no sleep)
+  # ── Frontend static site ──────────────────────────────────────────────────
   - type: web
     name: stgnn-frontend
     runtime: static
+    region: oregon
+    plan: free
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: ./frontend/dist
-    headers:
-      - path: /*
-        name: Cache-Control
-        value: no-cache
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        # Update this to your Render API URL after first deploy
         value: https://stgnn-api.onrender.com
