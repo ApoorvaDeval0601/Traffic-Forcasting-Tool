@@ -70,7 +70,7 @@ export default function Dashboard() {
       <header className="page-header">
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
           <div>
-            <h1>Traffic Forecast Dashboard</h1>
+            <h1>Traffic Forecast</h1>
             <p className="subtitle">
               Real-time predictions from ST-GNN · METR-LA · 1-hour horizon
               {frame && <span style={{ marginLeft:12, fontFamily:"var(--mono)", fontSize:11 }}>
